@@ -843,7 +843,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 
 	/* find and ref zswap entry */
 	spin_lock(&tree->lock);
-	entry = zswap_entry_find_get(&tree->rbroot, offset);
+	entry = zswap_entry_find_get(&tree->head, offset);
 	if (!entry) {
 		/* entry was invalidated */
 		spin_unlock(&tree->lock);
@@ -893,7 +893,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 
 	spin_lock(&tree->lock);
 	/* drop local reference */
-	zswap_entry_put(tree, entry);
+	zswap_entry_put(&tree->head, entry);
 
 	/*
 	* There are two possible situations for entry here:
@@ -902,8 +902,8 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	*     because invalidate happened during writeback
 	*  search the tree and free the entry if find entry
 	*/
-	if (entry == zswap_rb_search(&tree->rbroot, offset))
-		zswap_entry_put(tree, entry);
+	if (entry == zswap_search(&tree->head, offset))
+		zswap_entry_put(&tree->head, entry);
 	spin_unlock(&tree->lock);
 
 	goto end;
@@ -917,7 +917,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	*/
 fail:
 	spin_lock(&tree->lock);
-	zswap_entry_put(tree, entry);
+	zswap_entry_put(&tree->head, entry);
 	spin_unlock(&tree->lock);
 
 end:
@@ -1050,7 +1050,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	}
 
 	/* store */
-	hlen = zpool_evictable(entry->pool->zpool) ? sizeof(zhdr) : 0;
+	hlen = sizeof(zhdr);
 	ret = zpool_malloc(entry->pool->zpool, hlen + dlen,
 			   __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM,
 			   &handle);
@@ -1131,9 +1131,8 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 
 	/* decompress */
 	dlen = PAGE_SIZE;
-	src = zpool_map_handle(entry->pool->zpool, entry->handle, ZPOOL_MM_RO);
-	if (zpool_evictable(entry->pool->zpool))
-		src += sizeof(struct zswap_header);
+	src = (u8 *)zpool_map_handle(entry->pool->zpool, entry->handle,
+			ZPOOL_MM_RO) + sizeof(struct zswap_header);
 	dst = kmap_atomic(page);
 	tfm = *get_cpu_ptr(entry->pool->tfm);
 	ret = crypto_comp_decompress(tfm, src, entry->length, dst, &dlen);
